@@ -23,6 +23,7 @@ public class ElytraKeyOptions extends Screen {
 
 	CheckboxWidget fallWidget;
 	CheckboxWidget fireworkWidget;
+	CheckboxWidget doubleJumpWidget;
 
 	public ElytraKeyOptions() {
 		super(literal("ElytraKey options"));
@@ -43,6 +44,13 @@ public class ElytraKeyOptions extends Screen {
 				this.textRenderer)
 			.pos(this.width / 2 - 75, this.height / 6 + yOffset + 60)
 			.checked(ElytraKey.AUTO_EQUIP_FIREWORKS)
+			.build());
+		
+		this.addDrawableChild(doubleJumpWidget = CheckboxWidget.builder(
+				literal("when jumping in mid air"),
+				this.textRenderer)
+			.pos(this.width / 2 - 75, this.height / 6 + yOffset + 80)
+			.checked(ElytraKey.DOUBLE_JUMP_EQUIP)
 			.build());
 
 		this.addEasyTakeoffButton();
@@ -77,7 +85,7 @@ public class ElytraKeyOptions extends Screen {
 		};
 
 		var button = ButtonWidget.builder(buttonText.get(), action)
-			.position(this.width / 2 - 75, this.height / 6 + yOffset + 90)
+			.position(this.width / 2 - 75, this.height / 6 + yOffset + 110)
 			.size(150, 20)
 			.tooltip(tooltipText)
 			.build();
@@ -98,6 +106,7 @@ public class ElytraKeyOptions extends Screen {
 		boolean b = super.mouseClicked(click, doubled);
 		ElytraKey.AUTO_EQUIP_FALL = fallWidget.isChecked();
 		ElytraKey.AUTO_EQUIP_FIREWORKS = fireworkWidget.isChecked();
+		ElytraKey.DOUBLE_JUMP_EQUIP = doubleJumpWidget.isChecked();
 		new ConfigLoader().saveConfig();
 		return b;
 	}

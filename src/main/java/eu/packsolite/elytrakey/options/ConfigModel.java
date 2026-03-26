@@ -6,4 +6,5 @@ public class ConfigModel {
 	public boolean easyTakeoff = true;
 	public boolean autoEquipFirework = false;
 	public boolean autoUnequip = true;
+	public boolean doubleJumpEquip = true;
 }

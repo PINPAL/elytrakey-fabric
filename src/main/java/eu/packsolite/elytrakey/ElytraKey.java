@@ -12,6 +12,9 @@ import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -19,6 +22,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult.Type;
+
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -36,6 +40,7 @@ public class ElytraKey implements ModInitializer {
 	public static boolean AUTO_UNEQUIP = true;
 	public static boolean EASY_TAKEOFF = true;
 	public static double AUTO_EQUIP_FALL_VELOCITY;
+	public static boolean DOUBLE_JUMP_EQUIP = true;
 
 	private MinecraftClient mc = MinecraftClient.getInstance();
 
@@ -43,8 +48,8 @@ public class ElytraKey implements ModInitializer {
 	private static KeyBinding elytraOptionsKeyBinding;
 
 	private boolean wasAutoEquipped = false;
-	private boolean startFlying = false;
-	private boolean boostNextTick = false;
+	private boolean jumpPreviouslyPressed = false;
+	private boolean jumpPreviouslyReleased = false;
 
 	@Override
 	public void onInitialize() {
@@ -61,7 +66,7 @@ public class ElytraKey implements ModInitializer {
 				mc.setScreen(new ElytraKeyOptions());
 			}
 
-			if (mc.player == null) {
+			if (mc.player == null || mc.player.isCreative() || mc.player.isSpectator()) {
 				return;
 			}
 
@@ -84,6 +89,15 @@ public class ElytraKey implements ModInitializer {
 				}
 			}
 
+			// Skip double jump and easy takeoff if already flying or in water
+			if (mc.player.isGliding() || mc.player.isTouchingWater()) {
+				return;
+			}
+
+			// Equip elytra if player jumps in mid-air while not in water
+			if (DOUBLE_JUMP_EQUIP) {
+				updateDoubleJumpEquip();
+			}
 			// Equip elytra, start gliding and boost with fireworks when right-clicking with a firework
 			if (EASY_TAKEOFF && (fireworksInMainHand || fireworksInOffHand)) {
 				updateEasyTakeoff(fireworksInMainHand ? Hand.MAIN_HAND : Hand.OFF_HAND);
@@ -91,44 +105,61 @@ public class ElytraKey implements ModInitializer {
 		});
 	}
 
+	// TODO: Replace this with mixin to ClientPlayerEntity.tickMovement() on init sendPacket
+	private void updateDoubleJumpEquip() {
+		// Reset flags when the player is on the ground
+		if (mc.player.isOnGround()) {
+			jumpPreviouslyPressed = false;
+			jumpPreviouslyReleased = false;
+			return;
+		}
+		// If we haven't detected jump key release yet, keep checking
+		if (!jumpPreviouslyReleased) {
+			// Detect key down
+			if (mc.options.jumpKey.isPressed()) {
+				jumpPreviouslyPressed = true;
+			}
+			// Detect key release
+			if (!mc.options.jumpKey.isPressed() && jumpPreviouslyPressed) {
+				jumpPreviouslyReleased = true;
+			}
+		} else if (mc.options.jumpKey.isPressed()) {
+			if (!isElytraEquipped()) {
+				// Equip Elytra
+				wasAutoEquipped = equipElytra();
+				// Start gliding with Elytra
+				startGliding();
+			}
+		}
+	}
+
 	private void updateEasyTakeoff(Hand fireworkHand) {
-		if (mc.player.isGliding()) {
-			if (boostNextTick) {
-				boostNextTick = false;
-				mc.options.jumpKey.setPressed(false);
-				mc.interactionManager.interactItem(mc.player, fireworkHand);
-				mc.player.swingHand(Hand.MAIN_HAND);
-			}
-		} else { // Not flying
-			if (startFlying) {
-				// Press space to switch to flying state
-				mc.options.jumpKey.setPressed(true);
-				boostNextTick = true;
-				startFlying = false;
-
-			} else if (mc.options.useKey.isPressed()) {
-
-				// Clicked with fireworks in air?
-				if (mc.crosshairTarget instanceof BlockHitResult && mc.crosshairTarget.getType() == Type.MISS) {
-
-					// Elytra already equipped?
-					if (!isElytraEquipped()) {
-						if (!equipElytra()) {
-							return;
-						}
-						wasAutoEquipped = true;
-					}
-
-					// Jump if on ground
-					if (mc.player.isOnGround()) {
-						mc.player.jump();
-					}
-
-					// Start takeoff
-					startFlying = true;
-					mc.options.jumpKey.setPressed(false);
+		if (mc.player.isOnGround()
+				&& mc.options.useKey.isPressed()
+				&& mc.crosshairTarget instanceof BlockHitResult
+				&& mc.crosshairTarget.getType() == Type.MISS) {
+			// Elytra already equipped?
+			if (!isElytraEquipped()) {
+				if (!equipElytra()) {
+					return;
 				}
+				wasAutoEquipped = true;
 			}
+
+			// Client side jump (prevent inconsistent launches due to client thinking it's on ground)
+			mc.player.jump();
+			// Move server player up 0.2 blocks and forcefully set onGround to false (effectively simulating a jump)
+			// This allows us to reliably get around waiting 2 ticks for the server to register client jump inputs
+			mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
+					mc.player.getX(), mc.player.getY() + 0.2, mc.player.getZ(),
+					false, mc.player.horizontalCollision));
+
+			// Start gliding with Elytra
+			startGliding();
+
+			// Send server packet to use firework (let client reconcile)
+			mc.getNetworkHandler().sendPacket(
+					new PlayerInteractItemC2SPacket(fireworkHand, 0, mc.player.getYaw(), mc.player.getPitch()));
 		}
 	}
 
@@ -197,6 +228,12 @@ public class ElytraKey implements ModInitializer {
 				print("elytrakey.chat.no_elytra");
 			}
 		}
+	}
+
+	private void startGliding() {
+		// Send server packet to start gliding (let client reconcile)
+		mc.getNetworkHandler()
+				.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
 	}
 
 	private int findChestplate() {
