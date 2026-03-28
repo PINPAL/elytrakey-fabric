@@ -29,3 +29,6 @@ bin/
 run/
 logs/
 crash-reports/
+
+# windows
+/desktop.ini

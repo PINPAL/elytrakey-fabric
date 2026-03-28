@@ -1,7 +1,7 @@
 {
 	"schemaVersion": 1,
 	"id": "elytrakey",
-	"version": "1.2.4",
+	"version": "${version}",
 	"name": "ElytraKey",
 	"description": "This mod adds a button to swap Elytra.",
 	"authors": [
@@ -16,7 +16,7 @@
 	"icon": "assets/elytrakey/icon.png",
 	"environment": "*",
 	"entrypoints": {
-		"main": [
+		"client": [
 			"eu.packsolite.elytrakey.ElytraKey"
 		],
 		"modmenu": [
