@@ -89,17 +89,10 @@ public class ElytraKey implements ClientModInitializer {
 			boolean hasLanded = player.isOnGround() || player.isTouchingWater();
 
 			if ((AUTO_EQUIP_FIREWORKS && fireworksInMainHand) || (AUTO_EQUIP_FALL && isFalling)) {
-				boolean elytraEquipped = isElytraEquipped();
-				if (!elytraEquipped) {
-					equipElytra();
-					pending_unequip = true;
-				}
-			} else {
-				boolean unEquip = AUTO_UNEQUIP && pending_unequip && hasLanded;
-				if (unEquip && isElytraEquipped()) {
-					pending_unequip = false;
-					equipChestplate();
-				}
+				pending_unequip = equipElytra();
+			} else if (AUTO_UNEQUIP && pending_unequip && hasLanded && isElytraEquipped()) {
+				pending_unequip = false;
+				equipChestplate();
 			}
 		});
 	}
@@ -109,11 +102,10 @@ public class ElytraKey implements ClientModInitializer {
 	 * @return true if {@link #pending_unequip} was set due to elytra being equipped
 	 */
 	public boolean doubleJumpEquip() {
-		if (DOUBLE_JUMP_EQUIP) {
-			pending_unequip = equipElytra();
-			return pending_unequip;
-		}
-		return false;
+		if (!DOUBLE_JUMP_EQUIP) return false;
+
+		pending_unequip = equipElytra();
+		return pending_unequip;
 	}
 
 	public void updateEasyTakeoff() {
@@ -132,8 +124,8 @@ public class ElytraKey implements ClientModInitializer {
 					player.getX(), player.getY() + 0.2, player.getZ(),
 					false, player.horizontalCollision));
 
-			// Start gliding with Elytra
-			startGliding();
+			// Send server packet to start gliding (let client reconcile)
+			network.sendPacket(new ClientCommandC2SPacket(player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
 	}
 
 	/**
@@ -149,68 +141,56 @@ public class ElytraKey implements ClientModInitializer {
 	 * @return true if the elytra has been auto equipped (or was already equipped), false if no elytra was found
 	 */
 	private boolean equipElytra() {
-		if (!isElytraEquipped()) {
-			int elytraSlot = findChestEquipment(true);
-
-			if (elytraSlot == -1) {
-				return false;
-			}
-
-			if (elytraSlot < 9) {
-				interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, elytraSlot, SlotActionType.SWAP, player);
-			} else {
-				interactionManager.clickSlot(player.playerScreenHandler.syncId, elytraSlot, 0, SlotActionType.PICKUP, player);
-				interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, 0, SlotActionType.PICKUP, player);
-				interactionManager.clickSlot(player.playerScreenHandler.syncId, elytraSlot, 0, SlotActionType.PICKUP, player);
-			}
-		}
-		return true;
+		if (isElytraEquipped()) return true;
+		return equipFromSlot(findChestEquipment(true));
 	}
 
-	public boolean equipChestplate() {
-		int chestSlot = findChestEquipment(false);
+	/**
+	 * Equips the chestplate
+	 * @return true if the chestplate has been equipped, false if no chestplate was found
+	 */
+	private boolean equipChestplate() {
+		return equipFromSlot(findChestEquipment(false));
+	}
 
-		if (chestSlot == -1) {
-			return false;
-		}
+	/**
+	 * Equips a specified inventory slot index into the player chestplate slot
+	 * @param slot the inventory slot to attempt to equip
+	 * @return true if the action was successful
+	 */
+	private boolean equipFromSlot(int slot) {
+		if (slot == -1) return false;
 
-		if (chestSlot < 9) {
-			interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, chestSlot, SlotActionType.SWAP, player);
+		if (slot < 9) {
+			interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, slot, SlotActionType.SWAP, player);
 		} else {
-			interactionManager.clickSlot(player.playerScreenHandler.syncId, chestSlot, 0, SlotActionType.PICKUP, player);
+			interactionManager.clickSlot(player.playerScreenHandler.syncId, slot, 0, SlotActionType.PICKUP, player);
 			interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, 0, SlotActionType.PICKUP, player);
-			interactionManager.clickSlot(player.playerScreenHandler.syncId, chestSlot, 0, SlotActionType.PICKUP, player);
+			interactionManager.clickSlot(player.playerScreenHandler.syncId, slot, 0, SlotActionType.PICKUP, player);
 		}
 		return true;
 	}
 
 	private void swapElytra() {
 		if (isElytraEquipped()) {
-			boolean equipped = equipChestplate();
-
+			boolean equipSuccess = equipChestplate();
 			// No chestplate found?
-			if (!equipped) {
+			if (!equipSuccess) {
 				int emptySlot = player.getInventory().getEmptySlot();
 
 				if (emptySlot < 0) {
 					print("elytrakey.chat.full_inventory");
 				} else {
-					interactionManager.clickSlot(player.playerScreenHandler.syncId, 6, emptySlot,
-							SlotActionType.SWAP, player);
+					interactionManager.clickSlot(
+						player.playerScreenHandler.syncId, 6, emptySlot, SlotActionType.SWAP, player
+					);
 				}
 			}
-		} else {
-			boolean equipped = equipElytra();
-
-			if (!equipped) {
-				print("elytrakey.chat.no_elytra");
-			}
 		}
-	}
-
-	private void startGliding() {
-		// Send server packet to start gliding (let client reconcile)
-		network.sendPacket(new ClientCommandC2SPacket(player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+		// Equip elytra, if unsuccessful alert user
+		else if (!equipElytra()) {
+			print("elytrakey.chat.no_elytra");
+		}
 	}
 
 	/**
