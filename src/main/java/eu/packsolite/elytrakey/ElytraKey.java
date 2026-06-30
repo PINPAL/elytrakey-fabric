@@ -2,10 +2,10 @@ package eu.packsolite.elytrakey;
 
 import eu.packsolite.elytrakey.options.ConfigLoader;
 import eu.packsolite.elytrakey.ui.ElytraKeyOptions;
+
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
@@ -16,28 +16,19 @@ import net.minecraft.component.type.AttributeModifiersComponent;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
-import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.DefaultedList;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult.Type;
-
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-
-import static net.minecraft.item.Items.*;
 
 public class ElytraKey implements ClientModInitializer {
 
@@ -50,8 +41,6 @@ public class ElytraKey implements ClientModInitializer {
 	public static double AUTO_EQUIP_FALL_VELOCITY;
 	public static boolean DOUBLE_JUMP_EQUIP = true;
 
-	private MinecraftClient mc = MinecraftClient.getInstance();
-
 	private ClientPlayerEntity player;
 	private ClientPlayNetworkHandler network;
 	private ClientPlayerInteractionManager interactionManager;
@@ -63,7 +52,7 @@ public class ElytraKey implements ClientModInitializer {
 	 * True if elytra was equipped automatically and therefore should be swapped to chestplate upon landing
 	 * @since 1.2.4 - renamed from wasAutoEquipped
 	 */
-	public boolean pending_unequip = false;
+	private boolean pending_unequip = false;
 
 	@Override
 	public void onInitializeClient() {
@@ -96,7 +85,6 @@ public class ElytraKey implements ClientModInitializer {
 			}
 
 			boolean fireworksInMainHand = player.getMainHandStack().getItem() == Items.FIREWORK_ROCKET;
-			boolean fireworksInOffHand = player.getOffHandStack().getItem() == Items.FIREWORK_ROCKET;
 			boolean isFalling = !player.isOnGround() && player.getVelocity().getY() < AUTO_EQUIP_FALL_VELOCITY;
 			boolean hasLanded = player.isOnGround() || player.isTouchingWater();
 
@@ -113,11 +101,6 @@ public class ElytraKey implements ClientModInitializer {
 					equipChestplate();
 				}
 			}
-
-			// Equip elytra, start gliding and boost with fireworks when right-clicking with a firework
-			if (EASY_TAKEOFF && (fireworksInMainHand || fireworksInOffHand)) {
-				updateEasyTakeoff(fireworksInMainHand ? Hand.MAIN_HAND : Hand.OFF_HAND);
-			}
 		});
 	}
 
@@ -133,19 +116,12 @@ public class ElytraKey implements ClientModInitializer {
 		return false;
 	}
 
-	private void updateEasyTakeoff(Hand fireworkHand) {
-		if (!(player.isGliding() || player.isTouchingWater())
-			&& mc.options.useKey.isPressed()
-			&& mc.crosshairTarget instanceof BlockHitResult
-			&& mc.crosshairTarget.getType() == Type.MISS
-		) {
-			// Elytra already equipped?
-			if (!isElytraEquipped()) {
-				if (!equipElytra()) {
-					return;
-				}
-				pending_unequip = true;
-			}
+	public void updateEasyTakeoff() {
+			if (!EASY_TAKEOFF) return;
+
+			// Exit early if we couldn't find an Elytra to equip
+			pending_unequip = equipElytra();
+			if (!pending_unequip) return;
 
 			// Client side jump (prevent inconsistent launches due to client thinking it's on ground)
 			// TODO: maybe wrap this in isOnGround() check??
@@ -158,11 +134,6 @@ public class ElytraKey implements ClientModInitializer {
 
 			// Start gliding with Elytra
 			startGliding();
-
-			// Send server packet to use firework (let client reconcile)
-			network.sendPacket(
-					new PlayerInteractItemC2SPacket(fireworkHand, 0, player.getYaw(), player.getPitch()));
-		}
 	}
 
 	/**
@@ -170,7 +141,6 @@ public class ElytraKey implements ClientModInitializer {
 	 * @return true if wearing an elytra, false otherwise
 	 */
 	private boolean isElytraEquipped() {
-//		return clientPlayer.getEquippedStack(EquipmentSlot.CHEST).contains(DataComponentTypes.GLIDER);
 		return LivingEntity.canGlideWith(player.getEquippedStack(EquipmentSlot.CHEST),EquipmentSlot.CHEST);
 	}
 
@@ -282,8 +252,10 @@ public class ElytraKey implements ClientModInitializer {
                    ItemStack stack = entry.getValue();
                    AttributeModifiersComponent attributes = stack.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
                    if (attributes == null) return 0.0;
-                   // Calculate the armor value of the chestplate
-                   return attributes.applyOperations(EntityAttributes.ARMOR, EntityAttributes.ARMOR.value().getDefaultValue(), EquipmentSlot.CHEST);
+                   // Calculate the armor & toughness value of the chestplate
+                   double armor = attributes.applyOperations(EntityAttributes.ARMOR, EntityAttributes.ARMOR.value().getDefaultValue(), EquipmentSlot.CHEST);
+				   double toughness = attributes.applyOperations(EntityAttributes.ARMOR_TOUGHNESS, EntityAttributes.ARMOR_TOUGHNESS.value().getDefaultValue(), EquipmentSlot.CHEST);
+				   return armor + toughness;
                })
            ).map(Map.Entry::getKey)
            .orElse(-1);
